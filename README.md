@@ -1,5 +1,7 @@
 # Idea Inventory
 
+**Live at [mariqa2002.github.io/IdeaInventory](https://mariqa2002.github.io/IdeaInventory/)**
+
 A treasure chest for every idea that turns up in your head — capture it, describe it,
 answer the three questions that turn an idea into a project, then break it into tasks
 and a timeline you can actually follow.
@@ -83,9 +85,11 @@ python3 -m http.server 8000
 
 ## Putting it on your phone and iPad
 
-1. Publish the folder anywhere that serves static files over HTTPS. With GitHub Pages:
-   push this branch, then **Settings → Pages → Deploy from a branch**, pick the branch
-   and the `/` root. You will get a `https://<user>.github.io/<repo>/` URL.
+1. It is already published: **https://mariqa2002.github.io/IdeaInventory/**
+   (GitHub Pages, **Settings → Pages → Deploy from a branch**, this branch, `/` root).
+   Every push to the branch redeploys it. Anywhere else that serves static files over
+   HTTPS works too — every path in the app is relative, so it does not care whether it
+   sits at a domain root or in a sub-folder.
 2. Open that URL in Safari on the iPhone or iPad.
 3. **Share → Add to Home Screen.** It installs with the treasure-chest icon, opens
    full screen without Safari's chrome, and works offline — the service worker caches
