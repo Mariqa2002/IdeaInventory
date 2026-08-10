@@ -1,6 +1,6 @@
 /* Offline shell. Bump CACHE when the app files change. */
 
-const CACHE = 'idea-inventory-v1';
+const CACHE = 'idea-inventory-v2';
 
 const ASSETS = [
   './',
@@ -14,6 +14,9 @@ const ASSETS = [
   './js/util.js',
   './js/icons.js',
   './js/ai.js',
+  './js/config.js',
+  './js/supabase.js',
+  './js/sync.js',
   './js/views/auth.js',
   './js/views/home.js',
   './js/views/idea.js',
