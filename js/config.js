@@ -18,8 +18,8 @@
    ========================================================================== */
 
 export const SUPABASE_DEFAULTS = {
-  url: '',
-  anonKey: '',
+  url: "https://maivnkhurzhgiookwssq.supabase.co",
+  anonKey: "sb_publishable_engpVobk_fCRBTSU3CDHbw__CsWwc_g",
 };
 
 /** How often the app checks the server for changes made on your other devices. */
