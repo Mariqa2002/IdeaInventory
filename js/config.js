@@ -14,7 +14,13 @@
 
    Find them in Supabase → Project Settings → API:
      url     → "Project URL",  e.g. https://abcdefghijkl.supabase.co
-     anonKey → "anon public" key
+     anonKey → the publishable key. Newer projects show it as "Publishable key"
+               (sb_publishable_…); older ones call it "anon public" (eyJhbGciOi…).
+               Either works here.
+
+   The key that must NEVER go in this file is the secret one — "service_role"
+   (eyJ…) or "Secret key" (sb_secret_…). It ignores every row level security
+   policy, and this file is published with the app.
    ========================================================================== */
 
 export const SUPABASE_DEFAULTS = {

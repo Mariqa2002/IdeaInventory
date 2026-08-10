@@ -26,11 +26,19 @@ export class ApiError extends Error {
 
 /* --- Connection settings ------------------------------------------------ */
 
+/**
+ * A choice made on this device always beats the defaults committed in
+ * config.js — otherwise "Change connection" and "use this device only" would
+ * be undone by the defaults on the very next load.
+ */
 export function readConnection(defaults) {
   try {
     const saved = JSON.parse(localStorage.getItem(CONFIG_KEY) || 'null');
-    if (saved?.url && saved?.anonKey) return { url: trimUrl(saved.url), anonKey: saved.anonKey.trim(), mode: saved.mode || 'cloud' };
     if (saved?.mode === 'local') return { url: '', anonKey: '', mode: 'local' };
+    if (saved?.mode === 'unset') return { url: '', anonKey: '', mode: 'unset' };
+    if (saved?.url && saved?.anonKey) {
+      return { url: trimUrl(saved.url), anonKey: saved.anonKey.trim(), mode: 'cloud' };
+    }
   } catch {}
   if (defaults?.url && defaults?.anonKey) {
     return { url: trimUrl(defaults.url), anonKey: defaults.anonKey.trim(), mode: 'cloud' };

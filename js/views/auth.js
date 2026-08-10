@@ -12,6 +12,11 @@ import { writeConnection } from '../supabase.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
+/** Decodes a JWT payload if that is what this is, so service_role keys can be spotted. */
+function atobSafe(value) {
+  try { return atob(value.split('.')[1] || ''); } catch { return ''; }
+}
+
 /** Accepts a hosted project URL, and a self-hosted Supabase on any host. */
 function validProjectUrl(value) {
   try {
@@ -51,7 +56,7 @@ function setupCard({ onConnectionChange }) {
     placeholder: 'https://yourproject.supabase.co', autocapitalize: 'off', spellcheck: false,
   });
   const key = h('input.input', {
-    placeholder: 'eyJhbGciOi…', autocapitalize: 'off', spellcheck: false,
+    placeholder: 'sb_publishable_… or eyJhbGciOi…', autocapitalize: 'off', spellcheck: false,
   });
   const error = h('div.error-text');
   const submit = h('button.btn.btn-primary.btn-block', { type: 'submit', text: 'Connect' });
@@ -66,8 +71,17 @@ function setupCard({ onConnectionChange }) {
         url.focus();
         return;
       }
-      if (key.value.trim().length < 40) {
-        error.textContent = 'That anon key looks too short — copy the whole thing.';
+      const cleanKey = key.value.trim();
+      // Never let the secret key near a public app — it ignores every row
+      // level security policy, and this file gets published.
+      if (/^sb_secret_/.test(cleanKey) || /"role"\s*:\s*"service_role"/.test(atobSafe(cleanKey))) {
+        error.textContent = 'That is the secret / service_role key — it bypasses all row security. ' +
+                            'Use the publishable (anon public) key instead.';
+        key.focus();
+        return;
+      }
+      if (cleanKey.length < 20) {
+        error.textContent = 'That key looks too short — copy the whole thing.';
         key.focus();
         return;
       }
