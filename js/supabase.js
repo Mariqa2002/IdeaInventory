@@ -75,6 +75,11 @@ export class Supabase {
     return { needsConfirmation: !data.access_token, user: data.user || null };
   }
 
+  /** Sends the confirmation link again (rate limited by Supabase). */
+  async resendConfirmation(email) {
+    await this._auth('/auth/v1/resend', { type: 'signup', email });
+  }
+
   async signIn(email, password) {
     const data = await this._auth('/auth/v1/token?grant_type=password', { email, password });
     this._store(data);
@@ -182,7 +187,15 @@ async function request(url, options, expectEmpty = false) {
     try { payload = JSON.parse(text); } catch {}
     const message = payload.error_description || payload.msg || payload.message
       || payload.error || text.slice(0, 200) || `Request failed (${response.status})`;
-    throw new ApiError(message, { status: response.status, code: payload.code || payload.error || '' });
+    // Supabase moved from `error` to `error_code`; `code` is sometimes just the
+    // HTTP status, so it is the last resort.
+    const code = payload.error_code
+      || (typeof payload.error === 'string' ? payload.error : '')
+      || (typeof payload.code === 'string' ? payload.code : '');
+    // The browser only logs "Failed to load resource: 400" by itself, which
+    // says nothing about why. Put the reason where anyone inspecting will see it.
+    console.warn('[Idea Inventory] request rejected', response.status, code || '(no code)', message, url);
+    throw new ApiError(message, { status: response.status, code });
   }
 
   if (expectEmpty || response.status === 204) return null;
