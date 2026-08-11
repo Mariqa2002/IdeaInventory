@@ -12,6 +12,11 @@ import { writeConnection } from '../supabase.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
+/** Decodes a JWT payload if that is what this is, so service_role keys can be spotted. */
+function atobSafe(value) {
+  try { return atob(value.split('.')[1] || ''); } catch { return ''; }
+}
+
 /** Accepts a hosted project URL, and a self-hosted Supabase on any host. */
 function validProjectUrl(value) {
   try {
@@ -51,7 +56,7 @@ function setupCard({ onConnectionChange }) {
     placeholder: 'https://yourproject.supabase.co', autocapitalize: 'off', spellcheck: false,
   });
   const key = h('input.input', {
-    placeholder: 'eyJhbGciOi…', autocapitalize: 'off', spellcheck: false,
+    placeholder: 'sb_publishable_… or eyJhbGciOi…', autocapitalize: 'off', spellcheck: false,
   });
   const error = h('div.error-text');
   const submit = h('button.btn.btn-primary.btn-block', { type: 'submit', text: 'Connect' });
@@ -66,8 +71,17 @@ function setupCard({ onConnectionChange }) {
         url.focus();
         return;
       }
-      if (key.value.trim().length < 40) {
-        error.textContent = 'That anon key looks too short — copy the whole thing.';
+      const cleanKey = key.value.trim();
+      // Never let the secret key near a public app — it ignores every row
+      // level security policy, and this file gets published.
+      if (/^sb_secret_/.test(cleanKey) || /"role"\s*:\s*"service_role"/.test(atobSafe(cleanKey))) {
+        error.textContent = 'That is the secret / service_role key — it bypasses all row security. ' +
+                            'Use the publishable (anon public) key instead.';
+        key.focus();
+        return;
+      }
+      if (cleanKey.length < 20) {
+        error.textContent = 'That key looks too short — copy the whole thing.';
         key.focus();
         return;
       }
@@ -108,76 +122,117 @@ function setupCard({ onConnectionChange }) {
 
 /* --- 2. Cloud account ---------------------------------------------------- */
 
+const LAST_EMAIL_KEY = 'ideaInventory.lastEmail';
+
+const rememberedEmail = () => {
+  try { return localStorage.getItem(LAST_EMAIL_KEY) || ''; } catch { return ''; }
+};
+const rememberEmail = (email) => {
+  try { localStorage.setItem(LAST_EMAIL_KEY, email); } catch {}
+};
+
 function cloudCard(ctx) {
   const { client, onSignedIn, onConnectionChange } = ctx;
-  let mode = 'signin';
+
+  // A device that has never signed in is almost certainly here to create the
+  // account, so that is what it opens on. Once an email has been used here,
+  // signing in becomes the default.
+  let mode = rememberedEmail() ? 'signin' : 'signup';
+  let banner = null;          // { tone, text, detail, action: { label, run } }
+  let typedEmail = rememberedEmail();
 
   const wrap = h('div');
   paint();
   return wrap;
 
+  function setMode(next) {
+    if (mode === next) return;
+    mode = next;
+    banner = null;
+    paint();
+  }
+
   function paint() {
     const signingUp = mode === 'signup';
 
-    const email = h('input.input', { type: 'email', autocomplete: 'username', placeholder: 'you@example.com', required: true });
+    const email = h('input.input', {
+      type: 'email', autocomplete: 'username', placeholder: 'you@example.com',
+      value: typedEmail, required: true,
+      onInput: () => { typedEmail = email.value; },
+    });
     const pass = h('input.input', {
       type: 'password',
       autocomplete: signingUp ? 'new-password' : 'current-password',
       placeholder: signingUp ? 'At least 6 characters' : 'Your password',
       required: true,
     });
-    const error = h('div.error-text');
-    const notice = h('div.small');
     const submit = h('button.btn.btn-primary.btn-block', {
-      type: 'submit', text: signingUp ? 'Create account' : 'Unlock',
+      type: 'submit', text: signingUp ? 'Create my account' : 'Unlock',
     });
+
+    const switcher = h('div.auth-switch',
+      h('div.segmented', { role: 'group', 'aria-label': 'Create an account or sign in' },
+        h('button', {
+          type: 'button', text: 'Create account',
+          'aria-pressed': String(signingUp),
+          onClick: () => setMode('signup'),
+        }),
+        h('button', {
+          type: 'button', text: 'Sign in',
+          'aria-pressed': String(!signingUp),
+          onClick: () => setMode('signin'),
+        })));
 
     const form = h('form.auth-form', {
       async onSubmit(event) {
         event.preventDefault();
-        error.textContent = '';
-        notice.textContent = '';
+        banner = null;
 
-        if (!EMAIL_RE.test(email.value.trim())) { error.textContent = 'That email address does not look right.'; return; }
-        if (pass.value.length < 6) { error.textContent = 'Passwords need at least 6 characters.'; return; }
+        if (!EMAIL_RE.test(email.value.trim())) {
+          return show({ tone: 'error', text: 'That email address does not look right.' });
+        }
+        if (pass.value.length < 6) {
+          return show({ tone: 'error', text: 'Passwords need at least 6 characters.' });
+        }
 
+        const address = email.value.trim();
         busy(submit, true);
         try {
           if (signingUp) {
-            const { needsConfirmation } = await client.signUp(email.value.trim(), pass.value);
+            const { needsConfirmation } = await client.signUp(address, pass.value);
+            rememberEmail(address);
             if (needsConfirmation) {
-              notice.className = 'small';
-              notice.style.color = 'var(--ok)';
-              notice.textContent = 'Account created. Check your inbox for the confirmation link, then come back and unlock.';
+              // The account exists but cannot sign in yet. Move to the sign-in
+              // form (a full repaint, so the handler matches the button).
               mode = 'signin';
-              busy(submit, false, 'Unlock');
+              banner = {
+                tone: 'ok',
+                text: `Account created. Supabase has emailed a confirmation link to ${address} — ` +
+                      'click it, then come back and sign in.',
+                action: { label: 'Send the email again', run: () => resend(address) },
+              };
+              paint();
               return;
             }
           } else {
-            await client.signIn(email.value.trim(), pass.value);
+            await client.signIn(address, pass.value);
+            rememberEmail(address);
           }
           const adopted = store.claimOwner(client.user.id);
           onSignedIn({ adopted });
         } catch (err) {
-          busy(submit, false, signingUp ? 'Create account' : 'Unlock');
-          error.textContent = friendlyAuthError(err, signingUp);
+          busy(submit, false, signingUp ? 'Create my account' : 'Unlock');
+          show(explainAuthError(err, { signingUp, email: address, setMode, resend }));
         }
       },
     },
+      switcher,
       field('Email', email),
       field('Password', pass),
-      error,
-      notice,
+      bannerNode(),
       submit);
 
-    const footer = h('div.auth-foot.stack.gap-8',
-      h('div',
-        h('span.small.dim', { text: signingUp ? 'Already have an account? ' : 'First time on this device? ' }),
-        h('button.linkish', {
-          type: 'button',
-          text: signingUp ? 'Sign in instead' : 'Create an account',
-          onClick: () => { mode = signingUp ? 'signin' : 'signup'; paint(); },
-        })),
+    const footer = h('div.auth-foot',
       h('button.linkish', {
         type: 'button', text: 'Change connection',
         async onClick() {
@@ -198,21 +253,124 @@ function cloudCard(ctx) {
         ? 'One account, every device — your phone, your iPad and your laptop all see the same ideas.'
         : 'Unlock your treasure chest of ideas.',
       form, footer));
+
+    function show(next) {
+      banner = next;
+      const fresh = bannerNode();
+      form.replaceChild(fresh, form.querySelector('.auth-note, .auth-note-empty'));
+    }
+  }
+
+  function bannerNode() {
+    if (!banner) return h('span.auth-note-empty');
+    const node = h('div.auth-note.is-' + banner.tone,
+      h('div', { text: banner.text }),
+      banner.detail ? h('div.detail', { text: banner.detail }) : null);
+    if (banner.action) {
+      node.appendChild(h('div',
+        h('button.btn.btn-xs', {
+          type: 'button', text: banner.action.label,
+          onClick: (event) => banner.action.run(event.currentTarget),
+        })));
+    }
+    return node;
+  }
+
+  async function resend(address, button) {
+    if (button) { button.disabled = true; button.textContent = 'Sending…'; }
+    try {
+      await client.resendConfirmation(address);
+      banner = { tone: 'ok', text: `Another confirmation link is on its way to ${address}.` };
+    } catch (err) {
+      banner = {
+        tone: 'warn',
+        text: err.code === 'over_email_send_rate_limit'
+          ? 'Supabase limits how often it will send that email. Wait a minute and try again.'
+          : 'Could not send it again.',
+        detail: err.message,
+      };
+    }
+    paint();
   }
 }
 
-function friendlyAuthError(err, signingUp) {
+/**
+ * Turns a Supabase auth failure into something actionable. `error_code` is the
+ * reliable signal; the wording of `msg` has changed between versions.
+ */
+function explainAuthError(err, { signingUp, email, setMode, resend }) {
   if (err.offline) {
-    return 'No connection. Signing in for the first time on a device needs one — after that the app works offline.';
+    return {
+      tone: 'error',
+      text: 'No connection. Signing in for the first time on a device needs one — after that the app works offline.',
+    };
   }
+
+  const code = err.code || '';
   const message = (err.message || '').toLowerCase();
-  if (message.includes('invalid login')) return 'That email and password combination did not match.';
-  if (message.includes('already registered') || message.includes('already been registered')) {
-    return 'There is already an account with that email — sign in instead.';
+
+  if (code === 'email_not_confirmed' || message.includes('email not confirmed')) {
+    return {
+      tone: 'warn',
+      text: 'This account still needs to be confirmed. Click the link in the email Supabase sent you, then sign in.',
+      action: { label: 'Send the email again', run: (button) => resend(email, button) },
+    };
   }
-  if (message.includes('email not confirmed')) return 'Confirm your email first — check your inbox for the link.';
-  if (message.includes('password')) return err.message;
-  return (signingUp ? 'Could not create the account: ' : 'Could not sign in: ') + err.message;
+
+  if (code === 'invalid_credentials' || code === 'invalid_grant' || message.includes('invalid login')) {
+    return {
+      tone: 'error',
+      text: 'That email and password did not match an account.',
+      detail: 'If you have not created your account yet, switch to "Create account" above.',
+      action: { label: 'Create an account instead', run: () => setMode('signup') },
+    };
+  }
+
+  if (code === 'user_already_exists' || message.includes('already registered')) {
+    return {
+      tone: 'warn',
+      text: 'There is already an account with that email.',
+      action: { label: 'Sign in instead', run: () => setMode('signin') },
+    };
+  }
+
+  if (code === 'weak_password' || message.includes('password should be')) {
+    return { tone: 'error', text: 'That password is too weak for your project settings.', detail: err.message };
+  }
+
+  if (code === 'signup_disabled' || message.includes('signups not allowed')) {
+    return {
+      tone: 'error',
+      text: 'This Supabase project has new sign-ups switched off.',
+      detail: 'Turn them back on under Authentication → Sign In / Providers → Email.',
+    };
+  }
+
+  if (code === 'over_email_send_rate_limit' || message.includes('rate limit')) {
+    return { tone: 'warn', text: 'Too many attempts for now — wait a minute and try again.', detail: err.message };
+  }
+
+  if (err.status === 404) {
+    return {
+      tone: 'error',
+      text: 'That project URL did not answer as a Supabase project.',
+      detail: 'Check it under Project Settings → API, then use "Change connection" below.',
+    };
+  }
+
+  if (err.status === 401) {
+    return {
+      tone: 'error',
+      text: 'The project rejected the anon key.',
+      detail: 'Copy the "anon public" key again from Project Settings → API, then use "Change connection" below.',
+    };
+  }
+
+  return {
+    tone: 'error',
+    text: signingUp ? 'Could not create the account.' : 'Could not sign in.',
+    detail: `${err.message}${code ? ` (${code})` : ''}`,
+  };
 }
 
 /* --- 3. Device-only ------------------------------------------------------ */

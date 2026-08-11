@@ -26,11 +26,19 @@ export class ApiError extends Error {
 
 /* --- Connection settings ------------------------------------------------ */
 
+/**
+ * A choice made on this device always beats the defaults committed in
+ * config.js — otherwise "Change connection" and "use this device only" would
+ * be undone by the defaults on the very next load.
+ */
 export function readConnection(defaults) {
   try {
     const saved = JSON.parse(localStorage.getItem(CONFIG_KEY) || 'null');
-    if (saved?.url && saved?.anonKey) return { url: trimUrl(saved.url), anonKey: saved.anonKey.trim(), mode: saved.mode || 'cloud' };
     if (saved?.mode === 'local') return { url: '', anonKey: '', mode: 'local' };
+    if (saved?.mode === 'unset') return { url: '', anonKey: '', mode: 'unset' };
+    if (saved?.url && saved?.anonKey) {
+      return { url: trimUrl(saved.url), anonKey: saved.anonKey.trim(), mode: 'cloud' };
+    }
   } catch {}
   if (defaults?.url && defaults?.anonKey) {
     return { url: trimUrl(defaults.url), anonKey: defaults.anonKey.trim(), mode: 'cloud' };
@@ -73,6 +81,11 @@ export class Supabase {
     const data = await this._auth('/auth/v1/signup', { email, password });
     if (data.access_token) this._store(data);
     return { needsConfirmation: !data.access_token, user: data.user || null };
+  }
+
+  /** Sends the confirmation link again (rate limited by Supabase). */
+  async resendConfirmation(email) {
+    await this._auth('/auth/v1/resend', { type: 'signup', email });
   }
 
   async signIn(email, password) {
@@ -182,7 +195,15 @@ async function request(url, options, expectEmpty = false) {
     try { payload = JSON.parse(text); } catch {}
     const message = payload.error_description || payload.msg || payload.message
       || payload.error || text.slice(0, 200) || `Request failed (${response.status})`;
-    throw new ApiError(message, { status: response.status, code: payload.code || payload.error || '' });
+    // Supabase moved from `error` to `error_code`; `code` is sometimes just the
+    // HTTP status, so it is the last resort.
+    const code = payload.error_code
+      || (typeof payload.error === 'string' ? payload.error : '')
+      || (typeof payload.code === 'string' ? payload.code : '');
+    // The browser only logs "Failed to load resource: 400" by itself, which
+    // says nothing about why. Put the reason where anyone inspecting will see it.
+    console.warn('[Idea Inventory] request rejected', response.status, code || '(no code)', message, url);
+    throw new ApiError(message, { status: response.status, code });
   }
 
   if (expectEmpty || response.status === 204) return null;

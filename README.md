@@ -101,6 +101,23 @@ signed-in account. Your password is handled by Supabase and never touches this c
 The one key you must never put in the repo is the *service_role* key, which bypasses
 those policies.
 
+### If the account screen rejects you
+
+The app shows the reason and, where there is one, a button that fixes it. The usual
+causes:
+
+| What it says | What happened |
+| --- | --- |
+| *That email and password did not match an account* | The account does not exist yet — use the **Create account** tab. A device that has never signed in opens on that tab already. |
+| *This account still needs to be confirmed* | Supabase emailed you a link and is waiting for you to click it. **Send the email again** is there if it did not arrive. To stop being asked at all, turn off *Authentication → Sign In / Providers → Email → Confirm email*. |
+| *There is already an account with that email* | Switch to **Sign in**. |
+| *This project has new sign-ups switched off* | Turn them back on under *Authentication → Sign In / Providers → Email*. |
+| *That project URL did not answer* / *rejected the anon key* | Re-copy both from *Project Settings → API* and use **Change connection**. |
+
+Whatever the failure, the browser console also gets a line beginning
+`[Idea Inventory] request rejected` with the status, Supabase's error code and its
+message — that is the thing to look at if something ever gets past the messages above.
+
 ### Prefer not to use a server at all?
 
 The setup screen offers **"Skip — use this device only"**. The app then keeps
