@@ -78,7 +78,7 @@ function ringRow(ideas) {
       percent: total ? (active / total) * 100 : 0,
       label: "Ideas captured",
       note: active
-        ? `${plural(active, "idea")} still in mind`
+        ? `${plural(active, "idea")} in your mind`
         : "All wrapped up",
     }),
     ringCard({

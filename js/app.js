@@ -175,7 +175,7 @@ function openSettings() {
 
   const archiveMinutes = h('input.input', {
     type: 'number', min: '1', max: '1440', value: String(settings.archiveMinutes),
-    onChange: () => store.setSetting('archiveMinutes', clamp(Number(archiveMinutes.value) || 30, 1, 1440)),
+    onChange: () => store.setSetting('archiveMinutes', clamp(Number(archiveMinutes.value) || 3, 1, 1440)),
   });
 
   const apiKey = h('input.input', {

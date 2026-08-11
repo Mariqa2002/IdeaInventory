@@ -16,8 +16,6 @@ export function renderBoard(main, { idea, rerender }) {
   const archived = store.archivedTasks(idea);
 
   main.appendChild(h('div.board-tools',
-    h('span.tiny.dim.row.gap-6', icon('archive'),
-      h('span', { text: `Completed tasks slide into the archive after ${settings.archiveMinutes} minutes.` })),
     h('div.grow'),
     h('button.btn.btn-sm' + (showArchive ? '.btn-soft' : ''), {
       type: 'button',
@@ -321,7 +319,7 @@ export function openTaskForm({ idea, status = 'pending', onSaved }) {
 
   const body = h('div.form-grid',
     field('Task', title),
-    h('label.check', priority, h('span', { text: 'Priority task — pin it to the top of Pending' })),
+    h('label.check', priority, h('span', { text: 'Priority task' })),
     h('div.form-2col',
       field('Completion date (optional)', due),
       field('Start date (optional)', start)),

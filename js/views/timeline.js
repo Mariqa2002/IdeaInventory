@@ -28,7 +28,7 @@ export function renderTimeline(main, { idea, rerender }) {
 /* --- AI panel ----------------------------------------------------------- */
 
 function aiPanelWrap(idea, rerender) {
-  const wrap = h('div', { style: { padding: '0 var(--gutter)' } });
+  const wrap = h('div', { style: { padding: '28px var(--gutter) 0' } });
   wrap.appendChild(aiPanel(idea, rerender));
   return wrap;
 }

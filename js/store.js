@@ -51,7 +51,7 @@ function blankState() {
       ideaView: 'grid',
       sidebarCollapsed: false,
       showArchive: false,
-      archiveMinutes: 30,
+      archiveMinutes: 3,
       apiKey: '',
     },
     sync: {

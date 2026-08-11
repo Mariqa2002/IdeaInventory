@@ -42,7 +42,7 @@ export function openIdeaForm({ idea = null, onSaved } = {}) {
 
   const body = h('div.form-grid',
     field('Title', title),
-    field('Description', description, 'Shown under the title on your dashboard.'),
+    field('Description', description),
 
     h('div.stack.gap-12',
       noteBanner('Worth filling in',
