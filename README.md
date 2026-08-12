@@ -49,7 +49,7 @@ idea closes the gap again.
   card for notes/comments, an optional completion date and an optional start date and
   duration. A task marked **Priority** is pinned to the top of Pending, gets a maroon
   border, and cannot be dragged out of place. Completed tasks slide into an
-  **Archive** 30 minutes after they are finished (the delay is configurable, and the
+  **Archive** 3 minutes after they are finished (the delay is configurable, and the
   archive column is hidden until you ask for it).
 - **Timeline** — a Gantt chart in days or weeks. Drag a bar to move it, drag its right
   edge to change how long the task takes, or edit the dates in the task detail. Today

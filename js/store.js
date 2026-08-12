@@ -54,6 +54,7 @@ function blankState() {
       archiveMinutes: 3,
       apiKey: '',
     },
+    migrations: {},
     sync: {
       cursors: { ideas: null, tasks: null, notes: null },
       tombstones: { ideas: [], tasks: [], notes: [] },
@@ -70,7 +71,9 @@ const listeners = new Set();
 export function load() {
   try {
     const raw = localStorage.getItem(DATA_KEY);
-    if (raw) state = migrate(JSON.parse(raw));
+    // Reset explicitly when there is nothing saved, so a second load() never
+    // inherits the state left over from the first.
+    state = raw ? migrate(JSON.parse(raw)) : blankState();
   } catch (err) {
     console.warn('Could not read saved data, starting fresh.', err);
     state = blankState();
@@ -84,6 +87,17 @@ function migrate(saved) {
   next.ownerId = saved.ownerId || null;
   next.account = saved.account || null;
   next.settings = { ...next.settings, ...(saved.settings || {}) };
+  next.migrations = { ...(saved.migrations || {}) };
+
+  // The archive delay default dropped from 30 minutes to 3. A device that
+  // saved the old default is still carrying 30, and changing the default
+  // alone would never reach it, so rewrite it once. A delay somebody chose
+  // deliberately is left alone.
+  if (!next.migrations.archiveDelay3) {
+    if (next.settings.archiveMinutes === 30) next.settings.archiveMinutes = 3;
+    next.migrations.archiveDelay3 = true;
+  }
+
   next.sync = {
     cursors: { ...next.sync.cursors, ...(saved.sync?.cursors || {}) },
     tombstones: { ...next.sync.tombstones, ...(saved.sync?.tombstones || {}) },
