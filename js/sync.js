@@ -19,12 +19,53 @@
    different tasks in the same idea — never tread on each other.
    ========================================================================== */
 
-import { ApiError } from './supabase.js';
+import { ApiError, isSessionDead } from './supabase.js';
 import * as store from './store.js';
 import { syncApi, ideaToRow, taskToRow, noteToRow } from './store.js';
 
 const CHUNK = 200;
 const TABLES = ['ideas', 'tasks', 'notes'];
+
+/**
+ * Turns a failure into something a person can act on.
+ *
+ * "Sync issue" on its own is useless — worse on a phone, where there is no
+ * tooltip to hover. Each of these is a real thing that goes wrong with a
+ * Supabase project, paired with the one action that fixes it.
+ */
+function diagnose(err, step) {
+  const status = err instanceof ApiError ? err.status : 0;
+  const code = err instanceof ApiError ? err.code : '';
+  const detail = [
+    step,
+    status ? `HTTP ${status}` : err.name,
+    code,
+    err.message,
+  ].filter(Boolean).join(' · ');
+  let cause = err.message || 'Something went wrong.';
+  let fix = '';
+
+  if (isSessionDead(err)) {
+    cause = 'This device is no longer signed in to your project.';
+    fix = 'Sign in again with your email and password. Nothing on this device is lost.';
+  } else if (status === 404) {
+    cause = 'The project answered, but the tables this app needs are not there.';
+    fix = 'Open the Supabase dashboard → SQL Editor and run supabase/schema.sql once.';
+  } else if (code === '42501' || status === 403) {
+    cause = 'The database refused the write under its row level security rules.';
+    fix = 'Re-run supabase/schema.sql — it recreates the policies that let you read and write your own rows.';
+  } else if (code.startsWith('PGRST')) {
+    cause = 'The database rejected the shape of the data this device sent.';
+    fix = 'This is a bug in the app rather than in your project — the detail below identifies it.';
+  } else if (status === 503 || status === 504 || status === 540) {
+    cause = 'Your Supabase project is not responding — free projects pause after a spell of inactivity.';
+    fix = 'Open the Supabase dashboard and resume the project, then sync again.';
+  } else if (status >= 500) {
+    cause = 'Supabase returned a server error.';
+    fix = 'Usually temporary. Try again in a minute.';
+  }
+  return { cause, fix, detail, status, code };
+}
 
 export class SyncEngine {
   constructor(client) {
@@ -32,7 +73,8 @@ export class SyncEngine {
     this.listeners = new Set();
     this.running = null;
     this.queued = false;
-    this.status = { state: 'idle', lastSyncAt: null, pending: 0, message: '', changed: 0 };
+    this.step = '';
+    this.status = { state: 'idle', lastSyncAt: null, pending: 0, message: '', changed: 0, problem: null };
   }
 
   onStatus(fn) {
@@ -69,20 +111,23 @@ export class SyncEngine {
         if (changed) syncApi.commit(); else syncApi.save();
         // `changed` tells the app that rows arrived from another device and
         // whatever is on screen is now out of date.
-        this._emit({ state: 'idle', lastSyncAt: Date.now(), message: '', changed });
+        this._emit({ state: 'idle', lastSyncAt: Date.now(), message: '', changed, problem: null });
         return true;
       } catch (err) {
         const offline = err instanceof ApiError && err.offline;
-        const expired = err instanceof ApiError && (err.status === 401 || err.status === 403);
+        const dead = isSessionDead(err);
+        const problem = offline ? null : diagnose(err, this.step);
         syncApi.save();
         this._emit({
-          state: offline ? 'offline' : expired ? 'signedOut' : 'error',
-          message: offline ? 'No connection — your changes are saved on this device.' : err.message,
+          state: offline ? 'offline' : dead ? 'signedOut' : 'error',
+          message: offline ? 'No connection — your changes are saved on this device.' : problem.cause,
           changed: 0,
+          problem,
         });
-        if (!offline) console.warn('Sync failed:', err);
+        if (!offline) console.warn('[Idea Inventory] sync failed', problem, err);
         return false;
       } finally {
+        this.step = '';
         this.running = null;
         if (this.queued) { this.queued = false; setTimeout(() => this.sync({ silent: true }), 0); }
       }
@@ -113,6 +158,7 @@ export class SyncEngine {
   }
 
   async _pushRecords(table, entries, toRow, toRecord) {
+    if (entries.length) this.step = `sending ${table}`;
     for (let i = 0; i < entries.length; i += CHUNK) {
       const slice = entries.slice(i, i + CHUNK);
       // Remember how many times each record had been edited before it went up,
@@ -130,6 +176,7 @@ export class SyncEngine {
     for (const table of TABLES) {
       const pending = syncApi.tombstones(table);
       if (!pending.length) continue;
+      this.step = `sending deleted ${table}`;
       const deletedAt = new Date().toISOString();
       for (let i = 0; i < pending.length; i += CHUNK) {
         const slice = pending.slice(i, i + CHUNK);
@@ -152,6 +199,7 @@ export class SyncEngine {
 
     let changed = 0;
     for (const table of TABLES) {
+      this.step = `reading ${table}`;
       let since = syncApi.cursors()[table];
       for (;;) {
         const rows = await this.client.select(table, { since, limit: 1000 });

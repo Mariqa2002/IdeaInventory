@@ -24,6 +24,40 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Is this error "your session is over", as opposed to "something went wrong"?
+ *
+ * It matters because the two need opposite responses: a dead session has to
+ * send the person back to the sign-in screen, while anything else should keep
+ * the queued changes and try again later. Getting it wrong strands the app, and
+ * it is easy to get wrong: GoTrue answers a stale refresh token with **400**,
+ * not 401, so a plain status check reads an ended session as a generic fault
+ * and leaves the pill on "Sync issue" for ever.
+ */
+const SESSION_DEAD_CODES = new Set([
+  'refresh_token_not_found',
+  'refresh_token_already_used',
+  'session_not_found',
+  'session_expired',
+  'session_missing',
+  'invalid_grant',
+  'bad_jwt',
+  'no_authorization',
+  'user_not_found',
+  'PGRST301',          // PostgREST for "that JWT has expired"
+]);
+
+export function isSessionDead(err) {
+  if (!(err instanceof ApiError) || err.offline) return false;
+  if (SESSION_DEAD_CODES.has(err.code)) return true;
+  // Postgres and PostgREST answer with their own codes. A row level security
+  // refusal is a 403 about the row, not about who you are — signing the person
+  // out over it would be the wrong move entirely.
+  if (/^(PGRST|[0-9A-Z]{5}$)/.test(err.code)) return false;
+  if (err.status === 401 || err.status === 403) return true;
+  return /refresh token|invalid_grant|jwt (is )?expired/i.test(err.message || '');
+}
+
 /* --- Connection settings ------------------------------------------------ */
 
 /**
@@ -108,18 +142,82 @@ export class Supabase {
     } catch {}
   }
 
+  /**
+   * Picks up a session another tab on this device wrote.
+   *
+   * Supabase rotates the refresh token on every use and revokes the old one,
+   * so two tabs holding the same session are a trap: whichever refreshes
+   * second sends a token that has already been spent, and GoTrue kills the
+   * whole chain — both tabs, permanently. The session lives in localStorage,
+   * which every tab can see, so the fix is simply to look before refreshing.
+   *
+   * Returns true when the in-memory session changed.
+   */
+  adoptStoredSession() {
+    const stored = loadSession();
+    if (!stored) {
+      if (!this.session) return false;
+      this.session = null;                    // another tab signed out
+      return true;
+    }
+    if (this.session?.refresh_token === stored.refresh_token) return false;
+    this.session = stored;
+    return true;
+  }
+
   /** A valid access token, refreshing first if this one is nearly out. */
   async accessToken() {
-    if (!this.session) throw new ApiError('Not signed in.', { status: 401 });
+    this.adoptStoredSession();
+    if (!this.session) throw new ApiError('Not signed in.', { status: 401, code: 'session_missing' });
     if (this.session.expires_at - Date.now() > 60000) return this.session.access_token;
     if (!this._refreshing) {
-      this._refreshing = this._auth('/auth/v1/token?grant_type=refresh_token', {
-        refresh_token: this.session.refresh_token,
-      })
-        .then((data) => { this._store(data); return this.session.access_token; })
-        .finally(() => { this._refreshing = null; });
+      this._refreshing = this._refresh().finally(() => { this._refreshing = null; });
     }
     return this._refreshing;
+  }
+
+  /**
+   * Refreshes under a lock shared by every tab on this device, so only one of
+   * them ever spends the token and the others simply read the result. Browsers
+   * without the Web Locks API fall back to going straight in — the recovery
+   * below covers them.
+   */
+  _refresh() {
+    const run = () => this._refreshLocked();
+    return navigator.locks?.request
+      ? navigator.locks.request('ideaInventory.token', run)
+      : run();
+  }
+
+  async _refreshLocked() {
+    // Whoever held the lock before us may have done the work already.
+    this.adoptStoredSession();
+    if (!this.session) throw new ApiError('Not signed in.', { status: 401, code: 'session_missing' });
+    if (this.session.expires_at - Date.now() > 60000) return this.session.access_token;
+
+    const sent = this.session.refresh_token;
+    try {
+      const data = await this._auth('/auth/v1/token?grant_type=refresh_token', { refresh_token: sent });
+      this._store(data);
+      return this.session.access_token;
+    } catch (err) {
+      // Without the lock two tabs can still collide. "Already used" means some
+      // other tab holds a good token and is about to write it, so give it a
+      // moment to land before writing the session off.
+      if (isSessionDead(err)) {
+        const rescued = await waitForNewerSession(sent);
+        if (rescued) {
+          this.session = rescued;
+          return rescued.access_token;
+        }
+        // Genuinely over. Drop the dead session so the app asks for a sign-in
+        // rather than retrying a token that can never work again. The ideas on
+        // this device are untouched and go up when they sign back in.
+        this.session = null;
+        saveSession(null);
+      }
+      throw err;
+    }
   }
 
   async _auth(path, body) {
@@ -209,6 +307,22 @@ async function request(url, options, expectEmpty = false) {
   if (expectEmpty || response.status === 204) return null;
   const text = await response.text();
   return text ? JSON.parse(text) : null;
+}
+
+/**
+ * Watches localStorage for a different refresh token than the one that just
+ * failed — i.e. another tab winning the race and saving its reply.
+ */
+async function waitForNewerSession(sent, ms = 2000) {
+  const until = Date.now() + ms;
+  for (;;) {
+    const stored = loadSession();
+    // Any token other than the one that just failed is a token somebody else
+    // successfully obtained — take it however long it has left to live.
+    if (stored && stored.refresh_token !== sent && stored.expires_at > Date.now()) return stored;
+    if (Date.now() >= until) return null;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }
 
 function loadSession() {

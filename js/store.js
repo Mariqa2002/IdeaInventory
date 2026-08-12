@@ -735,8 +735,19 @@ export const syncApi = {
 const iso = (ms) => (ms ? new Date(ms).toISOString() : null);
 const ms = (value) => (value ? new Date(value).getTime() : null);
 
+/**
+ * `JSON.stringify` drops keys whose value is `undefined`, and PostgREST rejects
+ * a batch whose objects do not all carry the same keys (PGRST102). So one task
+ * that never had a duration would take the whole push down with it. Every row
+ * therefore goes out with every column, `undefined` written as an explicit null.
+ */
+function fullRow(fields) {
+  for (const key of Object.keys(fields)) if (fields[key] === undefined) fields[key] = null;
+  return fields;
+}
+
 export function ideaToRow(idea, userId) {
-  return {
+  return fullRow({
     id: idea.id,
     user_id: userId,
     title: idea.title,
@@ -749,7 +760,7 @@ export function ideaToRow(idea, userId) {
     start_date: idea.startDate,
     created_at: iso(idea.createdAt),
     completed_at: iso(idea.completedAt),
-  };
+  });
 }
 
 function ideaFromRow(row) {
@@ -769,7 +780,7 @@ function ideaFromRow(row) {
 }
 
 export function taskToRow(task, ideaId, userId) {
-  return {
+  return fullRow({
     id: task.id,
     user_id: userId,
     idea_id: ideaId,
@@ -783,7 +794,7 @@ export function taskToRow(task, ideaId, userId) {
     archived: task.archived,
     created_at: iso(task.createdAt),
     completed_at: iso(task.completedAt),
-  };
+  });
 }
 
 function taskFromRow(row) {
@@ -803,13 +814,13 @@ function taskFromRow(row) {
 }
 
 export function noteToRow(note, taskId, userId) {
-  return {
+  return fullRow({
     id: note.id,
     user_id: userId,
     task_id: taskId,
     body: note.text,
     created_at: iso(note.createdAt),
-  };
+  });
 }
 
 function noteFromRow(row) {

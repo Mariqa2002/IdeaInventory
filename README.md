@@ -167,6 +167,22 @@ Worth knowing, because these are the moments where sync engines usually surprise
 The header pill is the whole status at a glance: *Synced*, *Syncing…*, *N waiting*,
 *Offline*, or *Sync issue*. Tap it to sync immediately.
 
+### If the pill says "Sync issue"
+
+Tap it. Instead of retrying blindly it opens the reason, what to do about it, and
+whether anything is still waiting on the device. The usual causes:
+
+| What it says | What happened |
+| --- | --- |
+| *This device is no longer signed in to your project* | The session ended. Sign in again — everything on the device is kept and goes up afterwards. |
+| *…not responding — free projects pause after a spell of inactivity* | Supabase pauses free projects that go unused. Open the dashboard and resume it. |
+| *…the tables this app needs are not there* | `supabase/schema.sql` has not been run, or it was run on a different project. |
+| *…refused the write under its row level security rules* | The policies are missing. Re-running `schema.sql` recreates them. |
+
+Nothing is ever lost while this is showing: changes queue on the device and go up
+when syncing works again. The last line of the dialog is the raw status, code and
+message, which is the thing to quote if none of the above fits.
+
 ## Your data
 
 - The server holds only what you type: ideas, tasks, notes and dates. Your password is

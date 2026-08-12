@@ -116,7 +116,13 @@ function syncPill() {
 
   const pill = h('button.sync-pill', {
     type: 'button',
-    onClick: () => sync.sync(),
+    // A tooltip is no use on a phone, which is where this app mostly lives, so
+    // a pill that is complaining opens the reason instead of retrying blindly.
+    onClick: () => {
+      const { state, problem } = sync.status;
+      if (state === 'error' || state === 'signedOut') openSyncProblem(problem);
+      else sync.sync();
+    },
   });
 
   const paint = (status) => {
@@ -138,6 +144,45 @@ function syncPill() {
 
   bindStatus(pill, paint);
   return pill;
+}
+
+/**
+ * What went wrong, what to do about it, and the raw detail underneath for when
+ * none of the guesses fit.
+ */
+function openSyncProblem(problem) {
+  const pending = store.pendingCount();
+  const p = problem || { cause: 'The last sync did not finish.', fix: '', detail: '' };
+
+  const body = h('div.stack.gap-12',
+    h('div.auth-note.is-error',
+      h('span', { text: p.cause }),
+      p.fix ? h('span.detail', { text: p.fix }) : null),
+    pending
+      ? h('p.small.muted', {
+          text: `${pending} change${pending === 1 ? '' : 's'} ${pending === 1 ? 'is' : 'are'} waiting on this device. ` +
+                'They stay safe here and go up as soon as syncing works again.',
+        })
+      : h('p.small.muted', { text: 'Nothing is waiting to be sent — everything on this device has already reached the server.' }),
+    p.detail ? h('p.tiny.dim', { text: p.detail }) : null);
+
+  openModal({
+    title: 'Sync issue',
+    body,
+    footer: (close) => frag(
+      h('button.btn', {
+        type: 'button', text: 'Close', onClick: () => close(),
+      }),
+      h('div.grow'),
+      client.signedIn
+        ? h('button.btn.btn-primary', {
+            type: 'button',
+            async onClick() { close(); await sync.sync(); },
+          }, icon('refresh'), 'Try again')
+        : h('button.btn.btn-primary', {
+            type: 'button', text: 'Sign in again', onClick: () => { close(); render(); },
+          })),
+  });
 }
 
 /**
@@ -240,9 +285,14 @@ function syncSection() {
 
   const status = h('div.small.muted');
   const paint = (s) => {
+    if (s.state === 'error' || s.state === 'signedOut') {
+      status.replaceChildren(
+        h('span', { text: s.problem?.cause || 'The last sync did not finish.' }),
+        s.problem?.fix ? h('div.tiny.dim', { text: s.problem.fix }) : null);
+      return;
+    }
     status.textContent = s.state === 'syncing' ? 'Syncing…'
       : s.state === 'offline' ? 'Offline — changes are queued on this device.'
-      : s.state === 'error' ? `Last attempt failed: ${s.message}`
       : s.lastSyncAt ? `Last synced ${fmtTimestamp(s.lastSyncAt)}` + (s.pending ? ` · ${s.pending} waiting` : '')
       : 'Not synced yet.';
   };
@@ -392,13 +442,26 @@ setInterval(() => {
   if (store.sweepArchive()) render();
 }, 60000);
 
-// Another tab on this device changed something.
+// Another tab on this device changed something. That includes signing in, out,
+// or rotating the access token — take the newer session rather than carrying on
+// with one that tab has already spent.
 window.addEventListener('storage', (event) => {
-  if (event.key && event.key.startsWith('ideaInventory.')) {
-    store.load();
-    applyTheme();
-    render();
+  if (!event.key || !event.key.startsWith('ideaInventory.')) return;
+
+  if (event.key.endsWith('session.v2')) {
+    // A token rotating next door is not news. Adopt it quietly — redrawing
+    // would throw away whatever is half-typed on this screen. Only a change of
+    // who is signed in is worth a repaint.
+    if (client.adoptStoredSession()) {
+      const showingAuth = !!app.querySelector('form.auth-form');
+      if (showingAuth === signedIn()) render();
+    }
+    return;
   }
+
+  store.load();
+  applyTheme();
+  render();
 });
 
 /* --- Go -------------------------------------------------------------------- */
